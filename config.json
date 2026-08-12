@@ -1,0 +1,15 @@
+{
+  "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+  "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.InsertOneDefaultStrategy",
+  "tasks.max": "1",
+  "topics": "scan-logs",
+  "insert.tolerance": "all",
+  "collection": "scan_logs",
+  "database": "scanner_service",
+  "connection.uri": "mongodb://mongo:27017",
+  "value.converter.schemas.enable": "false",
+  "name": "scan-log-mongo-sink",
+  "errors.tolerance": "all",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "post.processor.chain": "com.mongodb.kafka.connect.sink.processor.DocumentIdAdder"
+}

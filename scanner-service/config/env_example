@@ -1,0 +1,6 @@
+APP_PORT=8080
+DATABASE_DSN=postgres://postgres:postgres@localhost:5432/scanner_service?sslmode=disable
+KAFKA_BROKERS=localhost:29092
+KAFKA_TOPIC=scan-logs
+CLAMAV_ADDR=127.0.0.1:3310
+MAX_SCAN_SIZE=26214400

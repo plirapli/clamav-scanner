@@ -1,0 +1,119 @@
+openapi: 3.0.3
+info:
+  title: Scanner Service API
+  version: "1.0"
+  description: API documentation for Scanner Service
+servers:
+  - url: /
+paths:
+  /api/scanner/scan:
+    post:
+      tags:
+        - scanner
+      summary: Scan files or request body
+      description: Scan uploaded multipart files or raw request body with ClamAV.
+      security:
+        - ClientIDAuth: []
+          BearerAuth: []
+      parameters:
+        - name: X-Client-ID
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Client ID
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+            example: Bearer your-token
+          description: Bearer token
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+              required:
+                - files
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Scan completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+        "400":
+          description: Bad request or scan completed with issues
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+components:
+  securitySchemes:
+    ClientIDAuth:
+      type: apiKey
+      in: header
+      name: X-Client-ID
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: token
+  schemas:
+    Response:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 200
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+          example: scan completed
+        data:
+          $ref: "#/components/schemas/ScanResult"
+    ScanResult:
+      type: object
+      properties:
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileResult"
+    FileResult:
+      type: object
+      properties:
+        name:
+          type: string
+          example: sample.txt
+        status:
+          type: string
+          enum:
+            - clean
+            - infected
+            - failed
+          example: clean
+        scan:
+          type: string
+          example: Eicar-Test-Signature
+        error:
+          type: string
+          example: scan failed
