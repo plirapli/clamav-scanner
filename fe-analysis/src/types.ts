@@ -41,3 +41,23 @@ export interface ApiResponse<T> {
   message: string
   data: T
 }
+
+export type ScannerFileStatus = 'clean' | 'infected' | 'failed'
+
+export interface ScannerFileResult {
+  name: string
+  status: ScannerFileStatus
+  scan?: string
+  error?: string
+}
+
+export interface ScannerResult {
+  files: ScannerFileResult[]
+}
+
+export interface ScannerResponse {
+  code: number
+  status: string
+  message: string
+  data?: ScannerResult
+}
