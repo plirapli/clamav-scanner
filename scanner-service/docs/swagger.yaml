@@ -2,7 +2,10 @@ openapi: 3.0.3
 info:
   title: Scanner Service API
   version: "1.0"
-  description: API documentation for Scanner Service
+  description: >
+    ClamAV scanning with PE static analysis and classifier.dev assessment.
+    Each layer is reported separately: detection (ClamAV), evidence (static
+    analysis), assessment (classifier), decision (deterministic policy).
 servers:
   - url: /
 paths:
@@ -11,24 +14,11 @@ paths:
       tags:
         - scanner
       summary: Scan files or request body
-      description: Scan uploaded multipart files or raw request body with ClamAV.
-      security:
-        - ClientIDAuth: []
-          BearerAuth: []
-      parameters:
-        - name: X-Client-ID
-          in: header
-          required: true
-          schema:
-            type: string
-          description: Client ID
-        - name: Authorization
-          in: header
-          required: true
-          schema:
-            type: string
-            example: Bearer your-token
-          description: Bearer token
+      description: >
+        Scans uploaded multipart files or a raw request body with ClamAV, runs PE
+        static analysis on undetected files, classifies the evidence, and returns
+        a deterministic verdict (ALLOW / QUARANTINE / BLOCK). A completed scan
+        returns 200 regardless of the verdict.
       requestBody:
         required: true
         content:
@@ -55,27 +45,62 @@ paths:
               schema:
                 $ref: "#/components/schemas/Response"
         "400":
-          description: Bad request or scan completed with issues
+          description: Invalid request (no file, too many files, ...)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response"
-        "401":
-          description: Unauthorized
+  /api/scanner/logs:
+    get:
+      tags:
+        - scanner
+      summary: List scan logs
+      parameters:
+        - name: virus_name
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by virus name (partial match)
+        - name: application
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by application name (exact match)
+        - name: verdict
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ALLOW, QUARANTINE, BLOCK]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: skip
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Scan logs loaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+        "400":
+          description: Invalid limit, skip, or verdict
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response"
 components:
-  securitySchemes:
-    ClientIDAuth:
-      type: apiKey
-      in: header
-      name: X-Client-ID
-    BearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: token
   schemas:
     Response:
       type: object
@@ -89,6 +114,9 @@ components:
         message:
           type: string
           example: scan completed
+        request_id:
+          type: string
+          example: e48bcbfa6196aabea7dfae67766ba3f2
         data:
           $ref: "#/components/schemas/ScanResult"
     ScanResult:
@@ -103,17 +131,94 @@ components:
       properties:
         name:
           type: string
-          example: sample.txt
+          example: example.exe
+        size:
+          type: integer
+          example: 481231
+        mime:
+          type: string
+          example: application/vnd.microsoft.portable-executable
+        sha256:
+          type: string
         status:
           type: string
-          enum:
-            - clean
-            - infected
-            - failed
-          example: clean
+          enum: [clean, infected, quarantined, blocked, failed]
         scan:
           type: string
+          description: Virus name when ClamAV detected a signature
           example: Eicar-Test-Signature
         error:
           type: string
-          example: scan failed
+        verdict:
+          type: string
+          enum: [ALLOW, QUARANTINE, BLOCK]
+        verdict_reasons:
+          type: array
+          items:
+            type: string
+          example:
+            - "classifier: suspicious (0.91)"
+            - "static rule: packed and unsigned"
+        quarantined:
+          type: boolean
+        clamav:
+          $ref: "#/components/schemas/ClamAV"
+        static_analysis:
+          $ref: "#/components/schemas/StaticAnalysis"
+        classifier:
+          $ref: "#/components/schemas/Classifier"
+    ClamAV:
+      type: object
+      properties:
+        detected:
+          type: boolean
+        signature:
+          type: string
+          nullable: true
+        error:
+          type: string
+    StaticAnalysis:
+      type: object
+      properties:
+        supported:
+          type: boolean
+        file_type:
+          type: string
+          example: PE32+
+        architecture:
+          type: string
+          example: x86_64
+        max_entropy:
+          type: number
+          example: 7.94
+        has_packed_section:
+          type: boolean
+        has_digital_signature:
+          type: boolean
+        packer_hints:
+          type: array
+          items:
+            type: string
+        suspicious_imports:
+          type: array
+          items:
+            type: string
+        imports_count:
+          type: integer
+    Classifier:
+      type: object
+      properties:
+        label:
+          type: string
+          enum: [benign, suspicious, malicious, insufficient-evidence]
+        confidence:
+          type: number
+          nullable: true
+        model:
+          type: string
+          example: jev-1.13.0
+        scores:
+          type: object
+          additionalProperties:
+            type: number
+          nullable: true

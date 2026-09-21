@@ -45,6 +45,9 @@ config/.env.*
 pkg/constants/config_constant.go
 Dockerfile
 
+# Local data
+data/
+
 .github/secrets.local
 .github/secrets.local
 .github/secrets.local

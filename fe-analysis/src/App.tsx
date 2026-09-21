@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { analyzeLog, listScanLogs, summarizeLogs } from './api'
-import AnalysisModal from './components/AnalysisModal'
+import { listScanLogs } from './api'
 import FileUploadPanel from './components/FileUploadPanel'
 import ScanLogsTable from './components/ScanLogsTable'
 import StatCard from './components/StatCard'
-import SummaryPanel from './components/SummaryPanel'
-import type { AnalysisResult, ScanLog, SummaryResult } from './types'
+import type { ScanLog } from './types'
 
 type Page = 'dashboard' | 'upload'
 
@@ -17,15 +15,6 @@ export default function App() {
 
   const [virusName, setVirusName] = useState('')
   const [application, setApplication] = useState('')
-
-  const [selectedLog, setSelectedLog] = useState<ScanLog | null>(null)
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
-  const [analyzingId, setAnalyzingId] = useState<string | null>(null)
-  const [analysisError, setAnalysisError] = useState<string | null>(null)
-
-  const [summary, setSummary] = useState<SummaryResult | null>(null)
-  const [summaryLoading, setSummaryLoading] = useState(false)
-  const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const fetchLogs = useCallback(async () => {
     try {
@@ -56,37 +45,8 @@ export default function App() {
     return { total: logs.length, viruses: viruses.size, apps: apps.size }
   }, [logs])
 
-  const handleAnalyze = async (log: ScanLog) => {
-    setSelectedLog(log)
-    setAnalysis(null)
-    setAnalysisError(null)
-    setAnalyzingId(log._id)
-    try {
-      const response = await analyzeLog(log._id)
-      setAnalysis(response.data)
-    } catch (err) {
-      setAnalysisError(err instanceof Error ? err.message : 'Analisis gagal')
-    } finally {
-      setAnalyzingId(null)
-    }
-  }
-
-  const handleGenerateSummary = async () => {
-    setSummaryLoading(true)
-    setSummaryError(null)
-    try {
-      const response = await summarizeLogs(20)
-      setSummary(response.data)
-    } catch (err) {
-      setSummaryError(err instanceof Error ? err.message : 'Ringkasan gagal')
-    } finally {
-      setSummaryLoading(false)
-    }
-  }
-
   const navigate = (nextPage: Page) => {
     setPage(nextPage)
-    if (nextPage === 'upload') setSelectedLog(null)
   }
 
   return (
@@ -96,7 +56,7 @@ export default function App() {
           <div>
             <h1 className="text-xl font-bold">Analisis Keamanan</h1>
             <p className="text-sm text-slate-500">
-              {page === 'dashboard' ? 'Log deteksi virus ClamAV + analisis AI' : 'Pindai file sebelum digunakan atau dibagikan'}
+              {page === 'dashboard' ? 'Log deteksi virus ClamAV' : 'Pindai file sebelum digunakan atau dibagikan'}
             </p>
           </div>
           <nav className="flex rounded-lg bg-slate-100 p-1" aria-label="Navigasi halaman">
@@ -127,15 +87,8 @@ export default function App() {
               <StatCard label="Aplikasi Terdampak" value={stats.apps} hint="aplikasi client" />
             </div>
 
-            <SummaryPanel
-              result={summary}
-              loading={summaryLoading}
-              error={summaryError}
-              onGenerate={handleGenerateSummary}
-            />
-
             <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex flex-col gap-3 border-b border-slate-200 p-5 sm:flex-row sm:items-end sm:justify-between">
+              <div className="border-b border-slate-200 p-5">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
                     <span className="text-xs font-medium text-slate-500">Nama Virus</span>
@@ -158,43 +111,17 @@ export default function App() {
                     />
                   </label>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoading(true)
-                    void fetchLogs()
-                  }}
-                  disabled={loading}
-                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {loading ? 'Memuat…' : 'Terapkan Filter'}
-                </button>
               </div>
 
               {error ? (
                 <p className="p-6 text-sm text-red-600">{error}</p>
               ) : (
-                <ScanLogsTable
-                  logs={logs}
-                  loading={loading}
-                  analyzingId={analyzingId}
-                  onAnalyze={handleAnalyze}
-                />
+                <ScanLogsTable logs={logs} loading={loading} />
               )}
             </section>
           </>
         ) : <FileUploadPanel />}
       </main>
-
-      {page === 'dashboard' && selectedLog ? (
-        <AnalysisModal
-          log={selectedLog}
-          result={analysis}
-          loading={analyzingId !== null}
-          error={analysisError}
-          onClose={() => setSelectedLog(null)}
-        />
-      ) : null}
     </div>
   )
 }

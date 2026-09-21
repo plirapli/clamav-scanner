@@ -1,3 +1,3 @@
 #!/bin/sh
 
-docker compose up -d clamav mongo kafka kafka-connect kafka-ui
+docker compose up -d --remove-orphans clamav kafka kafka-init kafka-ui

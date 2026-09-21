@@ -1,18 +1,7 @@
 import { useRef, useState } from 'react'
 import { scanFiles } from '../api'
+import ScanResultCard from './ScanResultCard'
 import type { ScannerResponse } from '../types'
-
-function resultStyle(status: string) {
-  if (status === 'clean') return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-  if (status === 'infected') return 'bg-red-50 text-red-700 ring-red-200'
-  return 'bg-amber-50 text-amber-700 ring-amber-200'
-}
-
-function resultLabel(status: string) {
-  if (status === 'clean') return 'Aman'
-  if (status === 'infected') return 'Terinfeksi'
-  return 'Gagal dipindai'
-}
 
 export default function FileUploadPanel() {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -58,16 +47,17 @@ export default function FileUploadPanel() {
           </div>
           <div>
             <p className="font-semibold">2. Mulai pemindaian</p>
-            <p className="mt-1 text-xs leading-5 text-indigo-800">Klik “Upload & Scan” dan tunggu hingga hasil setiap file ditampilkan.</p>
+            <p className="mt-1 text-xs leading-5 text-indigo-800">Klik “Upload & Scan”. ClamAV, static analysis, dan classifier berjalan berurutan.</p>
           </div>
           <div>
             <p className="font-semibold">3. Tindak lanjuti hasil</p>
-            <p className="mt-1 text-xs leading-5 text-indigo-800">Jangan buka atau jalankan file berstatus “Terinfeksi”. Hapus atau karantina file tersebut sesuai prosedur keamanan.</p>
+            <p className="mt-1 text-xs leading-5 text-indigo-800">Ikuti verdict: ALLOW boleh dipakai, QUARANTINE ditahan untuk review, BLOCK jangan dibuka.</p>
           </div>
         </div>
 
         <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-          Pemindaian mendeteksi ancaman yang sudah dikenal oleh database ClamAV. Hasil “Aman” bukan jaminan mutlak bahwa file bebas risiko.
+          Verdict adalah hasil berlapis: signature ClamAV, bukti static analysis, dan penilaian classifier.
+          File non-PE dan hasil classifier berconfidence rendah bisa belum tentu aman — verdict ALLOW bukan jaminan mutlak.
         </p>
         <input
           ref={inputRef}
@@ -109,25 +99,14 @@ export default function FileUploadPanel() {
         {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
 
         {result ? (
-          <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
-            <p className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          <div className="mt-4 space-y-3">
+            <p className="text-sm text-slate-700">
               {result.message}
+              {result.request_id ? ` · request ${result.request_id.slice(0, 8)}…` : ''}
             </p>
-            <ul className="divide-y divide-slate-200">
-              {result.data?.files.map((file) => (
-                <li key={file.name} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
-                  <div>
-                    <p className="font-medium text-slate-800">{file.name || 'Request body'}</p>
-                    {file.scan || file.error ? (
-                      <p className="mt-0.5 text-xs text-slate-500">{file.scan ?? file.error}</p>
-                    ) : null}
-                  </div>
-                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${resultStyle(file.status)}`}>
-                    {resultLabel(file.status)}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            {(result.data?.files ?? []).map((file, index) => (
+              <ScanResultCard key={`${file.name || 'body'}-${index}`} file={file} />
+            ))}
           </div>
         ) : null}
       </div>
