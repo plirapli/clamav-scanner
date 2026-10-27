@@ -21,6 +21,7 @@ type scanFileResponse struct {
 	Verdict        policy.Verdict           `json:"verdict,omitempty"`
 	VerdictReasons []string                 `json:"verdict_reasons,omitempty"`
 	Quarantined    bool                     `json:"quarantined,omitempty"`
+	Cached         bool                     `json:"cached,omitempty"`
 	ClamAV         clamAVResponse           `json:"clamav"`
 	StaticAnalysis *evidence.StaticAnalysis `json:"static_analysis,omitempty"`
 	Classifier     *classifier.Result       `json:"classifier,omitempty"`

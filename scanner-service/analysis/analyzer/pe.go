@@ -3,6 +3,7 @@ package analyzer
 import (
 	"bytes"
 	"debug/pe"
+	"encoding/binary"
 	"math"
 	"sort"
 	"strings"
@@ -26,50 +27,31 @@ var packerSectionNames = map[string]bool{
 	".enigma1": true, ".enigma2": true, ".mpress1": true, ".mpress2": true,
 	".nsp0": true, ".nsp1": true, ".boom": true, ".ccg": true,
 	".gentee": true, ".pklst": true, ".spack": true, ".winapi": true,
-	".y0da": true, ".rmnet": true, ".nsis": true, ".itext": true,
+	".y0da": true, ".rmnet": true,
 }
 
-// SuspiciousImports is a curated subset of Windows APIs commonly abused by
-// malware (process injection, anti-debugging, persistence, networking).
+// SuspiciousImports lists Windows APIs that are specific to process injection,
+// process hollowing, keylogging and download-and-execute. Broadly used APIs
+// (GetProcAddress, LoadLibrary, VirtualAlloc, registry and privilege calls,
+// IsDebuggerPresent) are deliberately excluded: they appear in almost every
+// legitimate program and drowned out the real signal.
 var SuspiciousImports = []string{
-	"adjusttokenprivileges",
 	"checkremotedebuggerpresent",
-	"createprocessa", "createprocessw",
-	"createremotethread",
-	"createservicea", "createservicew",
-	"cryptdecrypt", "cryptencrypt", "cryptgenkey",
+	"createremotethread", "createremotethreadex",
 	"getasynckeystate",
-	"getcomputernamea", "getcomputernamew",
-	"getprocadress",
-	"getthreadcontext",
-	"isdebuggerpresent",
-	"loadlibrarya", "loadlibraryw",
-	"lookupprivilegevaluea", "lookupprivilegevaluew",
-	"mapviewoffile",
 	"netuseradd",
 	"ntcreatethreadex",
 	"ntunmapviewofsection",
-	"openprocess",
-	"outputdebugstringa", "outputdebugstringw",
-	"process32first", "process32next",
+	"ntwritevirtualmemory",
 	"queueuserapc",
-	"readprocessmemory",
-	"regcreatekeyexa", "regcreatekeyexw",
-	"regsetvalueexa", "regsetvalueexw",
-	"resumethread",
-	"rtlmovememory",
+	"rtlcreateuserthread",
 	"setthreadcontext",
 	"setwindowshookexa", "setwindowshookexw",
-	"shellExecuteA", "shellexecutew",
-	"startservicea", "startservicew",
-	"suspendthread",
-	"terminateprocess",
 	"urldownloadtofilea", "urldownloadtofilew",
-	"virtualalloc", "virtualallocex",
-	"virtualprotect", "virtualprotectex",
+	"virtualallocex",
+	"virtualprotectex",
 	"winexec",
 	"writeprocessmemory",
-	"wtsgetactiveconsoleSessionid",
 	"zwunmapviewofsection",
 }
 
@@ -96,12 +78,12 @@ func NewPEAnalyzer(entropyThreshold float64) *PEAnalyzer {
 
 func (a *PEAnalyzer) Name() string { return "pe" }
 
-func (a *PEAnalyzer) Supports(data []byte) bool {
-	if !hasPEMagic(data) {
+func (a *PEAnalyzer) Supports(in Input) bool {
+	if !hasPEMagic(in.Data) {
 		return false
 	}
 
-	file, err := pe.NewFile(bytes.NewReader(data))
+	file, _, err := openPE(in.Data)
 	if err != nil {
 		return false
 	}
@@ -110,14 +92,41 @@ func (a *PEAnalyzer) Supports(data []byte) bool {
 	return true
 }
 
-func (a *PEAnalyzer) Analyze(data []byte) (evidence.StaticAnalysis, error) {
-	file, err := pe.NewFile(bytes.NewReader(data))
+// openPE parses a PE image. debug/pe also reads the COFF symbol table, which the
+// Windows loader ignores and packers often corrupt; when that is the only
+// problem, the image is re-parsed with the symbol table pointer cleared and
+// tampered is true.
+func openPE(data []byte) (file *pe.File, tampered bool, err error) {
+	file, err = pe.NewFile(bytes.NewReader(data))
+	if err == nil || !strings.Contains(err.Error(), "string table") || len(data) < 0x40 {
+		return file, false, err
+	}
+
+	coff := int(binary.LittleEndian.Uint32(data[0x3C:])) + 4
+	if coff < 0x40 || coff+20 > len(data) {
+		return nil, false, err
+	}
+
+	patched := bytes.Clone(data)
+	binary.LittleEndian.PutUint32(patched[coff+8:], 0)  // PointerToSymbolTable
+	binary.LittleEndian.PutUint32(patched[coff+12:], 0) // NumberOfSymbols
+	file, retryErr := pe.NewFile(bytes.NewReader(patched))
+	if retryErr != nil {
+		return nil, false, err
+	}
+	return file, true, nil
+}
+
+func (a *PEAnalyzer) Analyze(in Input) (evidence.StaticAnalysis, error) {
+	data := in.Data
+
+	file, tampered, err := openPE(data)
 	if err != nil {
 		return evidence.StaticAnalysis{}, err
 	}
 	defer file.Close()
 
-	result := evidence.StaticAnalysis{Supported: true}
+	result := evidence.StaticAnalysis{Supported: true, Kind: "pe"}
 	result.IsDLL = file.FileHeader.Characteristics&pe.IMAGE_FILE_DLL != 0
 	result.Architecture = architectureName(file.FileHeader.Machine)
 
@@ -137,12 +146,38 @@ func (a *PEAnalyzer) Analyze(data []byte) (evidence.StaticAnalysis, error) {
 		return evidence.StaticAnalysis{Supported: true, Error: "unrecognized PE optional header"}, nil
 	}
 
+	// The certificate table is excluded from the generic scan: its CRL/OCSP
+	// URLs and DER bytes say nothing about the program itself.
+	genericData := data
+	result.IsDotNet = directories[pe.IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR].VirtualAddress != 0
+
 	if pe.IMAGE_DIRECTORY_ENTRY_SECURITY < len(directories) {
 		directory := directories[pe.IMAGE_DIRECTORY_ENTRY_SECURITY]
 		result.HasDigitalSignature = directory.VirtualAddress > 0 && directory.Size > 0
+		if table, ok := certificateTable(data, directory.VirtualAddress, directory.Size); ok {
+			start := int(directory.VirtualAddress)
+			var layoutRef *peSignatureLayout
+			if layout, ok := signatureLayout(data, result.FileType == "PE32+", start, len(table)); ok {
+				layoutRef = &layout
+			}
+			if signer, ok := parseSigner(table, data, layoutRef); ok {
+				result.SignerSubject = signer.Subject
+				result.SignerIssuer = signer.Issuer
+				result.SignatureStatus = signer.Status
+				// A signature that does not match the file is worse than none:
+				// it was copied from another binary or the file was modified.
+				if signer.Status == SignatureInvalid {
+					result.HasDigitalSignature = false
+				}
+			}
+			genericData = append(bytes.Clone(data[:start]), data[start+len(table):]...)
+		}
 	}
 
 	hints := map[string]bool{}
+	if tampered {
+		hints["invalid COFF symbol table pointer"] = true
+	}
 	maxEntropy := 0.0
 	executableSectionSeen := false
 
@@ -191,8 +226,11 @@ func (a *PEAnalyzer) Analyze(data []byte) (evidence.StaticAnalysis, error) {
 			hints["section name resembles packer"] = true
 		}
 
-		if section.VirtualSize > 0x1000 && int64(section.VirtualSize) > int64(section.Size)*2+0x1000 {
-			hints["virtual size much larger than raw size"] = true
+		// Only executable sections: data sections routinely reserve
+		// uninitialized memory (.bss/.data), while packers unpack code into an
+		// empty executable section.
+		if executable && section.VirtualSize > 0x1000 && int64(section.VirtualSize) > int64(section.Size)*2+0x1000 {
+			hints["executable section much larger in memory than on disk"] = true
 		}
 
 		if writable && executable {
@@ -201,6 +239,21 @@ func (a *PEAnalyzer) Analyze(data []byte) (evidence.StaticAnalysis, error) {
 	}
 
 	result.MaxEntropy = round2(maxEntropy)
+
+	// Overlay: bytes after the last section's raw data (installers and
+	// droppers both carry their payload here). genericData already excludes
+	// the certificate table, which normally sits at the very end.
+	imageEnd := int64(0)
+	for _, section := range file.Sections {
+		if end := int64(section.Offset) + int64(section.Size); section.Size > 0 && end > imageEnd {
+			imageEnd = end
+		}
+	}
+	if imageEnd > 0 && imageEnd < int64(len(genericData)) {
+		overlay := genericData[imageEnd:]
+		result.OverlaySize = int64(len(overlay))
+		result.OverlayEntropy = round2(entropy(overlay))
+	}
 
 	symbols, err := file.ImportedSymbols()
 	if err == nil {
@@ -218,6 +271,8 @@ func (a *PEAnalyzer) Analyze(data []byte) (evidence.StaticAnalysis, error) {
 	sort.Strings(result.PackerHints)
 	result.HasPackedSection = len(result.PackerHints) > 0
 
+	result.Generic = ScanGeneric(Input{Data: genericData, Name: in.Name}, GenericOptions{SkipEmbeddedPE: true, Binary: true})
+
 	return result, nil
 }
 
@@ -230,10 +285,8 @@ func (a *PEAnalyzer) matchSuspicious(symbols []string) []string {
 	var matches []string
 
 	for _, symbol := range symbols {
-		name := symbol
-		if index := strings.LastIndex(symbol, ":"); index >= 0 {
-			name = symbol[index+1:]
-		}
+		// debug/pe returns imports as "Function:library.dll".
+		name, _, _ := strings.Cut(symbol, ":")
 		if !a.Suspicious[strings.ToLower(name)] || seen[name] {
 			continue
 		}

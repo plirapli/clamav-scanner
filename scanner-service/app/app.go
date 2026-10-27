@@ -13,6 +13,7 @@ import (
 	scannerHandler "scanner-service/app/scanner/handler"
 	"scanner-service/app/scanner/repo"
 	"scanner-service/config"
+	"scanner-service/core/scanner/interfaces"
 	"scanner-service/core/scanner/usecase"
 	"scanner-service/infra/clamav"
 	"scanner-service/infra/kafka"
@@ -37,14 +38,22 @@ func New(cfg config.Config) (Server, error) {
 	scanLogPublisher := repo.NewScanLogPublisher(producer)
 	logHandler := scannerHandler.NewScanLogHandler(repo.NewScanLogRepo(db))
 
-	analyzerRegistry := analyzer.NewRegistry(analyzer.NewPEAnalyzer(cfg.PackerEntropyThreshold))
+	analyzerRegistry := analyzer.NewRegistry(
+		analyzer.NewPEAnalyzer(cfg.PackerEntropyThreshold),
+		analyzer.NewPDFAnalyzer(),
+		analyzer.NewOfficeAnalyzer(),
+		analyzer.NewArchiveAnalyzer(),
+		analyzer.NewScriptAnalyzer(),
+		analyzer.NewGenericAnalyzer(),
+	)
 
 	var fileClassifier classifier.Classifier
 	if cfg.ClassifierEnabled {
-		fileClassifier = classifier.NewClassifierDev(
-			cfg.ClassifierURL,
-			cfg.ClassifierAPIKey,
-			cfg.ClassifierTier,
+		fileClassifier = classifier.NewClef(
+			cfg.ClassifierBaseURL,
+			cfg.ClassifierAccountID,
+			cfg.ClassifierAPIToken,
+			cfg.ClassifierModel,
 			cfg.ClassifierLabels,
 			cfg.ClassifierSendFilename,
 			cfg.ClassifierTimeout,
@@ -59,6 +68,11 @@ func New(cfg config.Config) (Server, error) {
 		}
 	}
 
+	var cacheRepo interfaces.ScanCacheRepository
+	if cfg.CacheEnabled {
+		cacheRepo = repo.NewScanCacheRepo(db)
+	}
+
 	failMode, err := policy.ParseVerdict(strings.ToUpper(cfg.FailMode))
 	if err != nil {
 		failMode = policy.Quarantine
@@ -67,24 +81,37 @@ func New(cfg config.Config) (Server, error) {
 	if err != nil {
 		staticRuleVerdict = policy.Quarantine
 	}
+	encryptedVerdict, err := policy.ParseVerdict(strings.ToUpper(cfg.EncryptedVerdict))
+	if err != nil {
+		encryptedVerdict = policy.Quarantine
+	}
+
+	policyConfig := policy.Config{
+		BlockConfidence:      cfg.VerdictBlockConfidence,
+		FailMode:             failMode,
+		AllowUnsupported:     cfg.AllowUnsupported,
+		StaticRulesEnabled:   cfg.StaticRulesEnabled,
+		StaticRuleVerdict:    staticRuleVerdict,
+		SuspiciousImportsMin: int(cfg.SuspiciousImportsMin),
+		GenericRulesEnabled:  cfg.GenericRulesEnabled,
+		EncryptedVerdict:     encryptedVerdict,
+	}
 
 	handler := scannerHandler.NewScannerHandler(scannerHandler.ScannerHandlerDeps{
-		Usecase:           scannerUsecase,
-		ScanLog:           scanLogPublisher,
-		Engine:            clamAVClient,
-		AppName:           cfg.AppName,
-		Analyzer:          analyzerRegistry,
-		Classifier:        fileClassifier,
-		ClassifierTimeout: cfg.ClassifierTimeout,
-		Policy: policy.Config{
-			BlockConfidence:      cfg.VerdictBlockConfidence,
-			FailMode:             failMode,
-			AllowUnsupported:     cfg.AllowUnsupported,
-			StaticRulesEnabled:   cfg.StaticRulesEnabled,
-			StaticRuleVerdict:    staticRuleVerdict,
-			SuspiciousImportsMin: int(cfg.SuspiciousImportsMin),
-		},
+		Usecase:            scannerUsecase,
+		ScanLog:            scanLogPublisher,
+		Engine:             clamAVClient,
+		AppName:            cfg.AppName,
+		Analyzer:           analyzerRegistry,
+		Classifier:         fileClassifier,
+		ClassifierTimeout:  cfg.ClassifierTimeout,
+		Policy:             policyConfig,
 		Quarantine:         quarantineStore,
+		Cache:              cacheRepo,
+		CacheTTL:           cfg.CacheTTL,
+		CacheErrorTTL:      cfg.CacheErrorTTL,
+		CacheMaxEntries:    int(cfg.CacheMaxEntries),
+		AnalyzerVersion:    analyzer.Version,
 		PublishAllVerdicts: cfg.PublishAllVerdicts,
 		MaxFilesPerRequest: int(cfg.MaxFilesPerRequest),
 	})
@@ -99,6 +126,7 @@ func New(cfg config.Config) (Server, error) {
 	}))
 	fiberApp.Static("/swagger", "./docs")
 	routes.RegisterScannerRoutes(fiberApp, handler, logHandler)
+	routes.RegisterEvalRoutes(fiberApp, scannerHandler.NewEvalHandler(cfg.EvalResultsDir, policyConfig))
 
 	return Server{app: fiberApp}, nil
 }

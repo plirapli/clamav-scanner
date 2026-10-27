@@ -55,6 +55,7 @@ export default function ScanLogDetail({ log }: { log: ScanLog }) {
         {log.quarantined ? (
           <p className="text-xs font-medium text-amber-700">Quarantined</p>
         ) : null}
+        {log.cached ? <p className="text-xs text-slate-500">Served from scan cache</p> : null}
       </div>
     </div>
   )

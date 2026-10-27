@@ -37,7 +37,8 @@ const createTable = `CREATE TABLE IF NOT EXISTS scan_logs (
 		classifier_scores TEXT NOT NULL DEFAULT '',
 		classifier_model TEXT NOT NULL DEFAULT '',
 		classifier_error TEXT NOT NULL DEFAULT '',
-		quarantined INTEGER NOT NULL DEFAULT 0
+		quarantined INTEGER NOT NULL DEFAULT 0,
+		cached INTEGER NOT NULL DEFAULT 0
 	)`
 
 var indexStatements = []string{
@@ -46,6 +47,27 @@ var indexStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_scan_logs_virus_name ON scan_logs(virus_name)`,
 	`CREATE INDEX IF NOT EXISTS idx_scan_logs_application ON scan_logs(application)`,
 	`CREATE INDEX IF NOT EXISTS idx_scan_logs_verdict ON scan_logs(verdict)`,
+}
+
+const createCacheTable = `CREATE TABLE IF NOT EXISTS scan_cache (
+	sha256 TEXT PRIMARY KEY,
+	size INTEGER NOT NULL,
+	analyzer_version INTEGER NOT NULL DEFAULT 0,
+	analysis_supported INTEGER NOT NULL DEFAULT 0,
+	evidence_json TEXT NOT NULL DEFAULT '',
+	classifier_label TEXT NOT NULL DEFAULT '',
+	classifier_confidence REAL,
+	classifier_scores TEXT NOT NULL DEFAULT '',
+	classifier_model TEXT NOT NULL DEFAULT '',
+	classifier_error TEXT NOT NULL DEFAULT '',
+	first_seen_at TEXT NOT NULL,
+	last_seen_at TEXT NOT NULL,
+	hits INTEGER NOT NULL DEFAULT 0
+)`
+
+var cacheStatements = []string{
+	createCacheTable,
+	`CREATE INDEX IF NOT EXISTS idx_scan_cache_last_seen ON scan_cache(last_seen_at)`,
 }
 
 // addedColumns keeps existing databases in sync with the schema above.
@@ -65,6 +87,7 @@ var addedColumns = []struct {
 	{"classifier_model", "ALTER TABLE scan_logs ADD COLUMN classifier_model TEXT NOT NULL DEFAULT ''"},
 	{"classifier_error", "ALTER TABLE scan_logs ADD COLUMN classifier_error TEXT NOT NULL DEFAULT ''"},
 	{"quarantined", "ALTER TABLE scan_logs ADD COLUMN quarantined INTEGER NOT NULL DEFAULT 0"},
+	{"cached", "ALTER TABLE scan_logs ADD COLUMN cached INTEGER NOT NULL DEFAULT 0"},
 }
 
 func Open(path string) (*sql.DB, error) {
@@ -90,6 +113,13 @@ func Open(path string) (*sql.DB, error) {
 	}
 
 	for _, statement := range indexStatements {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
+
+	for _, statement := range cacheStatements {
 		if _, err := db.Exec(statement); err != nil {
 			_ = db.Close()
 			return nil, err

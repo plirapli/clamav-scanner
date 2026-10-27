@@ -38,6 +38,11 @@ type ScannerHandler struct {
 	classifierTimeout  time.Duration
 	policyCfg          policy.Config
 	quarantine         *quarantine.Store
+	cache              interfaces.ScanCacheRepository
+	cacheTTL           time.Duration
+	cacheErrorTTL      time.Duration
+	cacheMaxEntries    int
+	analyzerVersion    int
 	publishAllVerdicts bool
 	maxFilesPerRequest int
 }
@@ -56,6 +61,11 @@ type ScannerHandlerDeps struct {
 	ClassifierTimeout  time.Duration
 	Policy             policy.Config
 	Quarantine         *quarantine.Store
+	Cache              interfaces.ScanCacheRepository
+	CacheTTL           time.Duration
+	CacheErrorTTL      time.Duration
+	CacheMaxEntries    int
+	AnalyzerVersion    int
 	PublishAllVerdicts bool
 	MaxFilesPerRequest int
 }
@@ -76,6 +86,11 @@ func NewScannerHandler(deps ScannerHandlerDeps) ScannerHandler {
 		classifierTimeout:  deps.ClassifierTimeout,
 		policyCfg:          deps.Policy,
 		quarantine:         deps.Quarantine,
+		cache:              deps.Cache,
+		cacheTTL:           deps.CacheTTL,
+		cacheErrorTTL:      deps.CacheErrorTTL,
+		cacheMaxEntries:    deps.CacheMaxEntries,
+		analyzerVersion:    deps.AnalyzerVersion,
 		publishAllVerdicts: deps.PublishAllVerdicts,
 		maxFilesPerRequest: maxFiles,
 	}
@@ -136,36 +151,10 @@ func (h ScannerHandler) process(c *fiber.Ctx, requestID string, target scanTarge
 	staticAnalysis := evidence.StaticAnalysis{Supported: false}
 	var classification *classifier.Result
 	classifierErr := ""
+	cached := false
 
 	if !clamResult.Detected && clamResult.Error == "" {
-		staticAnalysis = h.analyzer.Analyze(data)
-
-		if h.classifier != nil && staticAnalysis.Supported && staticAnalysis.Error == "" {
-			fileEvidence := evidence.FileEvidence{
-				File: evidence.FileInfo{
-					Name:   target.name,
-					Size:   int64(len(data)),
-					MIME:   target.mime,
-					SHA256: sha,
-				},
-				ClamAV:         clamResult,
-				StaticAnalysis: staticAnalysis,
-			}
-
-			ctx := c.UserContext()
-			if h.classifierTimeout > 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, h.classifierTimeout)
-				defer cancel()
-			}
-
-			classified, err := h.classifier.Classify(ctx, fileEvidence)
-			if err != nil {
-				classifierErr = err.Error()
-			} else {
-				classification = &classified
-			}
-		}
+		staticAnalysis, classification, classifierErr, cached = h.resolveAnalysis(c, target, sha, data)
 	}
 
 	decision := policy.Decide(policy.Input{
@@ -194,6 +183,7 @@ func (h ScannerHandler) process(c *fiber.Ctx, requestID string, target scanTarge
 	result.Classifier = classification
 	result.Verdict = decision.Verdict
 	result.VerdictReasons = decision.Reasons
+	result.Cached = cached
 	result.Status = scanStatus(decision.Verdict, clamResult)
 
 	if (decision.Verdict == policy.Quarantine || decision.Verdict == policy.Block) && h.quarantine != nil {
@@ -205,10 +195,79 @@ func (h ScannerHandler) process(c *fiber.Ctx, requestID string, target scanTarge
 	}
 
 	if decision.Verdict != policy.Allow || h.publishAllVerdicts {
-		h.publishLog(c, requestID, target, sha, duration, clamResult, staticAnalysis, classification, classifierErr, decision, result.Quarantined)
+		h.publishLog(c, requestID, target, sha, duration, clamResult, staticAnalysis, classification, classifierErr, decision, result.Quarantined, cached)
 	}
 
 	return result
+}
+
+// resolveAnalysis returns static analysis and classifier output, using the
+// scan cache when available. Cached entries store signals, not verdicts, so the
+// policy is always recomputed by the caller.
+func (h ScannerHandler) resolveAnalysis(c *fiber.Ctx, target scanTarget, sha string, data []byte) (evidence.StaticAnalysis, *classifier.Result, string, bool) {
+	ctx := c.UserContext()
+
+	if h.cache != nil {
+		entry, ok, err := h.cache.Lookup(ctx, sha, int64(len(data)), h.cacheTTL, h.cacheErrorTTL, h.analyzerVersion)
+		if err != nil {
+			log.Printf("scan cache lookup failed: %v", err)
+		} else if ok {
+			return entry.Analysis, entry.Classifier, entry.ClassifierError, true
+		}
+	}
+
+	staticAnalysis := h.analyzer.Analyze(analyzer.Input{Data: data, Name: target.name})
+
+	var classification *classifier.Result
+	classifierErr := ""
+
+	if h.classifier != nil && staticAnalysis.Supported && staticAnalysis.Error == "" {
+		fileEvidence := evidence.FileEvidence{
+			File: evidence.FileInfo{
+				Name:   target.name,
+				Size:   int64(len(data)),
+				MIME:   target.mime,
+				SHA256: sha,
+			},
+			StaticAnalysis: staticAnalysis,
+		}
+
+		classifyCtx := ctx
+		if h.classifierTimeout > 0 {
+			var cancel context.CancelFunc
+			classifyCtx, cancel = context.WithTimeout(ctx, h.classifierTimeout)
+			defer cancel()
+		}
+
+		classified, err := h.classifier.Classify(classifyCtx, fileEvidence)
+		if err != nil {
+			classifierErr = err.Error()
+		} else {
+			classification = &classified
+		}
+	}
+
+	if h.cache != nil && staticAnalysis.Supported {
+		entry := entities.CachedScan{
+			SHA256:          sha,
+			Size:            int64(len(data)),
+			AnalyzerVersion: h.analyzerVersion,
+			Analysis:        staticAnalysis,
+			Classifier:      classification,
+			ClassifierError: classifierErr,
+			FirstSeenAt:     time.Now(),
+		}
+		if err := h.cache.Store(ctx, entry); err != nil {
+			log.Printf("scan cache store failed: %v", err)
+		}
+		if h.cacheMaxEntries > 0 {
+			if err := h.cache.Prune(ctx, h.cacheMaxEntries, h.cacheTTL); err != nil {
+				log.Printf("scan cache prune failed: %v", err)
+			}
+		}
+	}
+
+	return staticAnalysis, classification, classifierErr, false
 }
 
 func (h ScannerHandler) publishLog(
@@ -223,6 +282,7 @@ func (h ScannerHandler) publishLog(
 	classifierErr string,
 	decision policy.Decision,
 	quarantined bool,
+	cached bool,
 ) {
 	reasons := decision.Reasons
 	if reasons == nil {
@@ -250,6 +310,7 @@ func (h ScannerHandler) publishLog(
 		AnalysisSupported: staticAnalysis.Supported,
 		ClassifierError:   classifierErr,
 		Quarantined:       quarantined,
+		Cached:            cached,
 	}
 
 	if encoded, err := json.Marshal(evidence.FileEvidence{

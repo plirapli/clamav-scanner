@@ -1,19 +1,54 @@
 import { useRef, useState } from 'react'
+import type { DragEvent } from 'react'
 import { scanFiles } from '../api'
 import ScanResultCard from './ScanResultCard'
 import type { ScannerResponse } from '../types'
 
 export default function FileUploadPanel() {
   const inputRef = useRef<HTMLInputElement>(null)
+  const dragDepth = useRef(0)
   const [files, setFiles] = useState<File[]>([])
+  const [isDragging, setIsDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ScannerResponse | null>(null)
 
-  const chooseFiles = (nextFiles: FileList | null) => {
+  const chooseFiles = (nextFiles: FileList | File[] | null) => {
     setFiles(nextFiles ? Array.from(nextFiles) : [])
     setResult(null)
     setError(null)
+  }
+
+  const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    if (loading) return
+    dragDepth.current += 1
+    setIsDragging(true)
+  }
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = loading ? 'none' : 'copy'
+  }
+
+  const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) {
+      setIsDragging(false)
+    }
+  }
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    dragDepth.current = 0
+    setIsDragging(false)
+    if (loading) return
+
+    const dropped = event.dataTransfer?.files
+    if (dropped?.length) {
+      chooseFiles(dropped)
+    }
   }
 
   const upload = async () => {
@@ -24,7 +59,7 @@ export default function FileUploadPanel() {
     try {
       setResult(await scanFiles(files))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload dan scan gagal')
+      setError(err instanceof Error ? err.message : 'Upload and scan failed')
     } finally {
       setLoading(false)
     }
@@ -33,31 +68,31 @@ export default function FileUploadPanel() {
   return (
     <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-200 p-5">
-        <h2 className="text-base font-bold text-slate-900">Upload File untuk Dipindai</h2>
+        <h2 className="text-base font-bold text-slate-900">Upload Files for Scanning</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Periksa file sebelum dibuka, digunakan, atau dibagikan. Anda dapat memilih beberapa file sekaligus.
+          Check files before opening, using, or sharing them. You can select multiple files at once.
         </p>
       </div>
 
       <div className="p-5">
         <div className="mb-5 grid gap-3 rounded-lg bg-indigo-50 p-4 text-sm text-indigo-950 sm:grid-cols-3">
           <div>
-            <p className="font-semibold">1. Pilih file</p>
-            <p className="mt-1 text-xs leading-5 text-indigo-800">Klik “Pilih File”, lalu pilih satu atau beberapa file dari perangkat Anda.</p>
+            <p className="font-semibold">1. Choose files</p>
+            <p className="mt-1 text-xs leading-5 text-indigo-800">Click “Choose Files” or drag and drop files onto the upload area.</p>
           </div>
           <div>
-            <p className="font-semibold">2. Mulai pemindaian</p>
-            <p className="mt-1 text-xs leading-5 text-indigo-800">Klik “Upload & Scan”. ClamAV, static analysis, dan classifier berjalan berurutan.</p>
+            <p className="font-semibold">2. Start the scan</p>
+            <p className="mt-1 text-xs leading-5 text-indigo-800">Click “Upload & Scan”. ClamAV, static analysis, and the classifier run in sequence.</p>
           </div>
           <div>
-            <p className="font-semibold">3. Tindak lanjuti hasil</p>
-            <p className="mt-1 text-xs leading-5 text-indigo-800">Ikuti verdict: ALLOW boleh dipakai, QUARANTINE ditahan untuk review, BLOCK jangan dibuka.</p>
+            <p className="font-semibold">3. Act on the result</p>
+            <p className="mt-1 text-xs leading-5 text-indigo-800">Follow the verdict: ALLOW can be used, QUARANTINE is held for review, BLOCK must not be opened.</p>
           </div>
         </div>
 
         <p className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900">
-          Verdict adalah hasil berlapis: signature ClamAV, bukti static analysis, dan penilaian classifier.
-          File non-PE dan hasil classifier berconfidence rendah bisa belum tentu aman — verdict ALLOW bukan jaminan mutlak.
+          The verdict is layered: ClamAV signatures, static-analysis evidence, and the classifier
+          assessment. Non-PE files and low-confidence assessments may still be unsafe — an ALLOW verdict is not a guarantee.
         </p>
         <input
           ref={inputRef}
@@ -66,16 +101,30 @@ export default function FileUploadPanel() {
           className="sr-only"
           onChange={(event) => chooseFiles(event.target.files)}
         />
-        <div className="flex flex-col gap-4 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className={`flex flex-col gap-4 rounded-lg border-2 border-dashed p-5 transition sm:flex-row sm:items-center sm:justify-between ${
+            isDragging ? 'border-indigo-400 bg-indigo-50' : 'border-slate-300 bg-slate-50'
+          }`}
+        >
           <div>
             <p className="text-sm font-medium text-slate-700">
-              {files.length ? `${files.length} file dipilih` : 'Belum ada file dipilih'}
+              {files.length ? `${files.length} file(s) selected` : 'No files selected'}
             </p>
             {files.length ? (
               <ul className="mt-1 max-w-xl space-y-1 text-xs text-slate-500">
                 {files.map((file) => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
               </ul>
-            ) : null}
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">
+                {isDragging
+                  ? 'Drop the files here…'
+                  : 'Drag and drop one or more files here, or click “Choose Files”.'}
+              </p>
+            )}
           </div>
           <div className="flex shrink-0 gap-2">
             <button
@@ -83,7 +132,7 @@ export default function FileUploadPanel() {
               onClick={() => inputRef.current?.click()}
               className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
             >
-              Pilih File
+              Choose Files
             </button>
             <button
               type="button"
@@ -91,7 +140,7 @@ export default function FileUploadPanel() {
               disabled={!files.length || loading}
               className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? 'Memindai…' : 'Upload & Scan'}
+              {loading ? 'Scanning…' : 'Upload & Scan'}
             </button>
           </div>
         </div>

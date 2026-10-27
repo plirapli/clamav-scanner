@@ -3,6 +3,7 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"scanner-service/analysis/classifier"
 	"scanner-service/analysis/evidence"
@@ -49,6 +50,8 @@ type Config struct {
 	StaticRulesEnabled   bool
 	StaticRuleVerdict    Verdict
 	SuspiciousImportsMin int
+	GenericRulesEnabled  bool
+	EncryptedVerdict     Verdict
 }
 
 type Input struct {
@@ -75,6 +78,14 @@ func Decide(in Input, cfg Config) Decision {
 		if signature == "" {
 			signature = "unknown"
 		}
+
+		if isEncryptedHeuristic(signature) {
+			return Decision{
+				Verdict: encryptedVerdict(cfg),
+				Reasons: []string{"clamav heuristic: " + signature},
+			}
+		}
+
 		return Decision{Verdict: Block, Reasons: []string{"clamav: detected (" + signature + ")"}}
 	}
 
@@ -126,7 +137,44 @@ func Decide(in Input, cfg Config) Decision {
 		}
 	}
 
+	if cfg.GenericRulesEnabled {
+		generic := in.Analysis.Generic
+		if generic.Encrypted {
+			escalate(encryptedVerdict(cfg), "static rule: encrypted or password-protected file")
+		}
+		if generic.EmbeddedPE {
+			escalate(cfg.StaticRuleVerdict, "static rule: embedded executable")
+		}
+		if generic.HasJavaScript && generic.AutoExec {
+			escalate(cfg.StaticRuleVerdict, "static rule: active content with auto-open")
+		}
+		if generic.HasMacros && len(generic.ExternalTargets) > 0 {
+			escalate(cfg.StaticRuleVerdict, "static rule: macros with external targets")
+		}
+		if len(generic.NestedExecutables) > 0 {
+			escalate(cfg.StaticRuleVerdict, "static rule: archive contains executable")
+		}
+		if hasObfuscatedScript(generic) {
+			escalate(cfg.StaticRuleVerdict, "static rule: obfuscated script")
+		}
+	}
+
 	return decision
+}
+
+func hasObfuscatedScript(g evidence.GenericEvidence) bool {
+	if len(g.ObfuscationHints) == 0 {
+		return false
+	}
+
+	for _, value := range g.SuspiciousStrings {
+		switch value {
+		case "eval", "Invoke-Expression", "-EncodedCommand", "FromBase64String":
+			return true
+		}
+	}
+
+	return false
 }
 
 func failVerdict(cfg Config) Verdict {
@@ -134,6 +182,22 @@ func failVerdict(cfg Config) Verdict {
 		return Allow
 	}
 	return Quarantine
+}
+
+// encryptedVerdict returns the configured verdict for encrypted files. The
+// default is QUARANTINE: password-protected archives are common in legitimate
+// workflows and should be reviewed rather than blocked outright.
+func encryptedVerdict(cfg Config) Verdict {
+	switch cfg.EncryptedVerdict {
+	case Allow, Quarantine, Block:
+		return cfg.EncryptedVerdict
+	default:
+		return Quarantine
+	}
+}
+
+func isEncryptedHeuristic(signature string) bool {
+	return strings.HasPrefix(strings.ToLower(signature), "heuristics.encrypted")
 }
 
 func classifierVerdict(result classifier.Result, cfg Config) Verdict {

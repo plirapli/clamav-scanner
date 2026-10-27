@@ -922,6 +922,7 @@ CACHE_TTL=168h                  # 0 = never expire
 CACHE_ERROR_TTL=15m             # cooldown for cached classifier errors
 CACHE_MAX_ENTRIES=100000        # 0 = unlimited; prunes oldest last_seen_at
 GENERIC_RULES_ENABLED=true
+ENCRYPTED_VERDICT=QUARANTINE  # ALLOW | QUARANTINE | BLOCK for encrypted/password-protected files
 EMBEDDED_PE_SCAN_MAX=8388608    # bytes scanned for embedded PE signatures
 
 MAX_FILES_PER_REQUEST=10
@@ -1273,7 +1274,7 @@ combination, and writes `summary.json` + `report.md`.
 
 Pick the config with the highest malware recall subject to
 `false-positive rate on benign ≤ 5%` (target is configurable). Record the chosen
-values in `config/env_example` with a comment referencing the run directory, so
+values in `config/.env.example` with a comment referencing the run directory, so
 the number has provenance.
 
 ### Ground rules
@@ -1289,7 +1290,7 @@ the number has provenance.
 ### Definition of done
 
 - `report.md` exists with tables, chosen thresholds, and model versions.
-- Chosen thresholds are written into `env_example` and the plan's section 14.
+- Chosen thresholds are written into `.env.example` and the plan's section 14.
 - Known limitations (corpus size, sample provenance, model drift) documented.
 
 ---
@@ -1493,8 +1494,15 @@ Unknown types keep `supported=false` and are not sent to the classifier.
 | Embedded executable | `EmbeddedPE` in a document/archive | `STATIC_RULE_VERDICT` |
 | Script obfuscation | base64 blob AND (`eval` or `-enc`) | `STATIC_RULE_VERDICT` |
 | Archive with executable | nested `.exe/.dll/.scr` | `STATIC_RULE_VERDICT` |
+| Encrypted / password-protected | archive entry encryption flag, unreadable ZIP, PDF `/Encrypt`, OLE `EncryptedPackage` | `ENCRYPTED_VERDICT` (default QUARANTINE) |
 
 Guarded by `GENERIC_RULES_ENABLED`; same max-severity model as section 10.
+
+ClamAV side: `AlertEncrypted`, `AlertEncryptedArchive` and `AlertEncryptedDoc` are
+enabled in `docker-compose.yml` via `CLAMD_CONF_*`. Scans of encrypted files come
+back as `Heuristics.Encrypted.*` detections, which the policy maps to
+`ENCRYPTED_VERDICT` instead of `BLOCK` so legitimate password-protected files can
+be reviewed rather than rejected outright.
 
 ### API and frontend
 
@@ -1526,11 +1534,12 @@ Plus policy table cases for each new rule.
 | --- | --- | --- |
 | 1 | Cleanup (AI/Mongo/Postgres removal) | done |
 | 2–7 | PE analysis, evidence, classifier, policy, quarantine, persistence, FE | done |
-| 8 | Evaluation harness + threshold calibration | section 20 |
-| 9 | Scan cache (SHA-256) | section 21 |
-| 10 | Non-PE coverage (generic/PDF/Office/archive) | section 22 |
+| 8 | Evaluation harness + threshold calibration | done (§20); thresholds still experimental — calibrate with a real corpus |
+| 9 | Scan cache (SHA-256) | done (§21) |
+| 10 | Non-PE coverage (generic/PDF/Office/archive) | done (§22) |
 
-Recommended order: **8 → 9 → 10**. Phase 8 needs no new runtime components and
-tells us whether the thresholds we shipped are defensible; Phase 9 immediately
-reduces classifier quota usage during evaluation and daily use; Phase 10 widens
-the second layer to the formats users actually upload.
+Remaining work is calibration, not construction: build a representative local
+corpus in `eval/corpus/`, run `cmd/eval collect` + `analyze`, and use the report
+to pick `VERDICT_BLOCK_CONFIDENCE` and `SUSPICIOUS_IMPORTS_MIN`. The first smoke
+run already surfaced a real trade-off (benign PDFs classified as
+`insufficient-evidence` become `QUARANTINE` under the current fail-closed policy).

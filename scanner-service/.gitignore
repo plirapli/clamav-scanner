@@ -41,7 +41,6 @@ logs/
 
 # Sensitive files - DO NOT COMMIT
 config/.env
-config/.env.*
 pkg/constants/config_constant.go
 Dockerfile
 
