@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,19 +35,27 @@ func (h ScanLogHandler) List(c *fiber.Ctx) error {
 		return writeError(c, fiber.StatusBadRequest, "invalid skip", nil)
 	}
 
-	verdict := ""
-	if raw := strings.TrimSpace(c.Query("verdict")); raw != "" {
-		parsed, err := policy.ParseVerdict(strings.ToUpper(raw))
-		if err != nil {
-			return writeError(c, fiber.StatusBadRequest, "invalid verdict", nil)
-		}
-		verdict = string(parsed)
+	verdict, err := queryVerdict(c)
+	if err != nil {
+		return writeError(c, fiber.StatusBadRequest, "invalid verdict", nil)
+	}
+
+	sortBy := strings.TrimSpace(c.Query("sort"))
+	if sortBy != "" && !slices.Contains(interfaces.ScanLogSortKeys, sortBy) {
+		return writeError(c, fiber.StatusBadRequest, "invalid sort", nil)
+	}
+
+	order := strings.ToLower(strings.TrimSpace(c.Query("order", "desc")))
+	if order != "asc" && order != "desc" {
+		return writeError(c, fiber.StatusBadRequest, "invalid order", nil)
 	}
 
 	logs, total, err := h.logs.List(c.UserContext(), interfaces.ScanLogFilter{
 		VirusName:   c.Query("virus_name"),
 		Application: c.Query("application"),
 		Verdict:     verdict,
+		SortBy:      sortBy,
+		SortDesc:    order == "desc",
 		Limit:       limit,
 		Skip:        skip,
 	})
@@ -58,6 +67,35 @@ func (h ScanLogHandler) List(c *fiber.Ctx) error {
 		"total": total,
 		"items": logs,
 	})
+}
+
+// Summary returns per-virus and per-application counts over every log that
+// matches the filters, so the dashboard is not limited to the visible page.
+func (h ScanLogHandler) Summary(c *fiber.Ctx) error {
+	verdict, err := queryVerdict(c)
+	if err != nil {
+		return writeError(c, fiber.StatusBadRequest, "invalid verdict", nil)
+	}
+
+	summary, err := h.logs.Summary(c.UserContext(), interfaces.ScanLogFilter{
+		VirusName:   c.Query("virus_name"),
+		Application: c.Query("application"),
+		Verdict:     verdict,
+	})
+	if err != nil {
+		return writeError(c, fiber.StatusInternalServerError, "failed to load scan log summary", nil)
+	}
+
+	return writeSuccess(c, fiber.StatusOK, "scan log summary loaded", summary)
+}
+
+func queryVerdict(c *fiber.Ctx) (string, error) {
+	raw := strings.TrimSpace(c.Query("verdict"))
+	if raw == "" {
+		return "", nil
+	}
+	parsed, err := policy.ParseVerdict(strings.ToUpper(raw))
+	return string(parsed), err
 }
 
 func queryInt(c *fiber.Ctx, key string, fallback int) (int, error) {

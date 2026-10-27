@@ -1,0 +1,92 @@
+# Benign eval samples: path<TAB>url<TAB>comma-separated tags
+# Fetched with: go run ./cmd/eval fetch-benign (from scanner-service/)
+# Pinned versions where the vendor keeps old releases; "latest" URLs may change.
+# Files over MAX_SCAN_SIZE (25 MiB) are skipped.
+
+# Signed Windows executables and installers
+benign/pe/7z2408-x64.exe	https://www.7-zip.org/a/7z2408-x64.exe	pe,installer,unsigned
+benign/pe/7z2408.exe	https://www.7-zip.org/a/7z2408.exe	pe,installer,unsigned,x86
+benign/pe/7zr.exe	https://www.7-zip.org/a/7zr.exe	pe,unsigned
+benign/pe/npp.8.6.9.Installer.x64.exe	https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.6.9/npp.8.6.9.Installer.x64.exe	pe,installer,signed
+benign/pe/putty.exe	https://the.earth.li/~sgtatham/putty/0.81/w64/putty.exe	pe,signed,network
+benign/pe/plink.exe	https://the.earth.li/~sgtatham/putty/0.81/w64/plink.exe	pe,signed,network
+benign/pe/pscp.exe	https://the.earth.li/~sgtatham/putty/0.81/w64/pscp.exe	pe,signed,network
+benign/pe/puttygen.exe	https://the.earth.li/~sgtatham/putty/0.81/w64/puttygen.exe	pe,signed
+benign/pe/jq-windows-amd64.exe	https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-amd64.exe	pe,unsigned
+benign/pe/vc_redist.x64.exe	https://aka.ms/vs/17/release/vc_redist.x64.exe	pe,installer,signed,latest
+benign/pe/firefox-stub.exe	https://download.mozilla.org/?product=firefox-stub&os=win&lang=en-US	pe,installer,signed,downloader,latest
+
+# Dual-use admin tools: legitimate, but import process/injection APIs (FP stress test)
+benign/pe/procexp64.exe	https://live.sysinternals.com/procexp64.exe	pe,signed,dual-use,latest
+benign/pe/Autoruns64.exe	https://live.sysinternals.com/Autoruns64.exe	pe,signed,dual-use,latest
+benign/pe/tcpview64.exe	https://live.sysinternals.com/tcpview64.exe	pe,signed,dual-use,latest
+benign/pe/handle64.exe	https://live.sysinternals.com/handle64.exe	pe,signed,dual-use,latest
+benign/pe/sigcheck64.exe	https://live.sysinternals.com/sigcheck64.exe	pe,signed,dual-use,latest
+benign/pe/PsExec64.exe	https://live.sysinternals.com/PsExec64.exe	pe,signed,dual-use,latest
+
+# Archives containing executables
+benign/archive/upx-4.2.4-win64.zip	https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip	archive,pe-inside,packed
+benign/archive/ripgrep-14.1.1-win64.zip	https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip	archive,pe-inside
+benign/archive/fd-v10.2.0-win64.zip	https://github.com/sharkdp/fd/releases/download/v10.2.0/fd-v10.2.0-x86_64-pc-windows-msvc.zip	archive,pe-inside
+benign/archive/ProcessMonitor.zip	https://download.sysinternals.com/files/ProcessMonitor.zip	archive,pe-inside,dual-use,latest
+benign/archive/python-3.12.7-embed-amd64.zip	https://www.python.org/ftp/python/3.12.7/python-3.12.7-embed-amd64.zip	archive,pe-inside,dll
+
+# PDFs (forms often carry JavaScript and actions)
+benign/pdf/fw9.pdf	https://www.irs.gov/pub/irs-pdf/fw9.pdf	pdf,form
+benign/pdf/fw4.pdf	https://www.irs.gov/pub/irs-pdf/fw4.pdf	pdf,form
+benign/pdf/f1040.pdf	https://www.irs.gov/pub/irs-pdf/f1040.pdf	pdf,form
+benign/pdf/p17.pdf	https://www.irs.gov/pub/irs-pdf/p17.pdf	pdf,large
+benign/pdf/i-9.pdf	https://uscis.gov/sites/default/files/document/forms/i-9.pdf	pdf,form
+benign/pdf/arxiv-1706.03762.pdf	https://arxiv.org/pdf/1706.03762	pdf,paper
+benign/pdf/arxiv-1810.04805.pdf	https://arxiv.org/pdf/1810.04805	pdf,paper
+benign/pdf/arxiv-2005.14165.pdf	https://arxiv.org/pdf/2005.14165	pdf,paper
+benign/pdf/w3c-dummy.pdf	https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf	pdf,minimal
+benign/pdf/adobe-sample-explain.pdf	https://www.adobe.com/support/products/enterprise/knowledgecenter/media/c4611_sample_explain.pdf	pdf
+
+# Office documents (Apache POI / python-docx / xlrd test fixtures)
+benign/office/SampleDoc.docx	https://github.com/apache/poi/raw/trunk/test-data/document/SampleDoc.docx	office,docx
+benign/office/SampleDoc.doc	https://github.com/apache/poi/raw/trunk/test-data/document/SampleDoc.doc	office,doc,ole
+benign/office/SampleSS.xlsx	https://github.com/apache/poi/raw/trunk/test-data/spreadsheet/SampleSS.xlsx	office,xlsx
+benign/office/SampleSS.xls	https://github.com/apache/poi/raw/trunk/test-data/spreadsheet/SampleSS.xls	office,xls,ole
+benign/office/SampleShow.pptx	https://github.com/apache/poi/raw/trunk/test-data/slideshow/SampleShow.pptx	office,pptx
+benign/office/openxml4j-sample.xlsx	https://github.com/apache/poi/raw/trunk/test-data/openxml4j/sample.xlsx	office,xlsx
+benign/office/python-docx-test.docx	https://github.com/python-openxml/python-docx/raw/master/tests/test_files/test.docx	office,docx
+benign/office/xlrd-sample.xlsx	https://github.com/python-excel/xlrd/raw/master/tests/samples/sample.xlsx	office,xlsx
+benign/office/xlrd-profiles.xls	https://github.com/python-excel/xlrd/raw/master/tests/samples/profiles.xls	office,xls,ole
+benign/office/calibre-demo.docx	https://calibre-ebook.com/downloads/demos/demo.docx	office,docx,images
+
+# Office documents with macros (benign VBA)
+benign/office-macro/SimpleMacro.docm	https://github.com/apache/poi/raw/trunk/test-data/document/SimpleMacro.docm	office,macros,docm
+benign/office-macro/SimpleMacro.xls	https://github.com/apache/poi/raw/trunk/test-data/spreadsheet/SimpleMacro.xls	office,macros,xls
+benign/office-macro/ExcelWithAttachments.xlsm	https://github.com/apache/poi/raw/trunk/test-data/spreadsheet/ExcelWithAttachments.xlsm	office,macros,xlsm,embedded
+benign/office-macro/oleform-PR314.docm	https://github.com/decalage2/oletools/raw/master/tests/test-data/oleform/oleform-PR314.docm	office,macros,docm,forms
+
+# Scripts (minified JS looks obfuscated; installers download and execute)
+benign/script/jquery-3.7.1.min.js	https://code.jquery.com/jquery-3.7.1.min.js	script,js,minified
+benign/script/jquery-3.7.1.js	https://code.jquery.com/jquery-3.7.1.js	script,js
+benign/script/lodash-4.17.21.min.js	https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js	script,js,minified
+benign/script/moment-2.30.1.min.js	https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.30.1/moment.min.js	script,js,minified
+benign/script/bootstrap-5.3.3.bundle.min.js	https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js	script,js,minified
+benign/script/react-dom-18.3.1.min.js	https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js	script,js,minified
+benign/script/chocolatey-install.ps1	https://community.chocolatey.org/install.ps1	script,ps1,downloader,latest
+benign/script/scoop-install.ps1	https://raw.githubusercontent.com/ScoopInstaller/Install/master/install.ps1	script,ps1,downloader,latest
+benign/script/dotnet-install.ps1	https://dot.net/v1/dotnet-install.ps1	script,ps1,downloader,latest
+benign/script/install-powershell.ps1	https://raw.githubusercontent.com/PowerShell/PowerShell/master/tools/install-powershell.ps1	script,ps1,downloader,latest
+benign/script/vcpkg-init.ps1	https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/vcpkg-init/vcpkg-init.ps1	script,ps1,latest
+
+# .NET assemblies (managed code). A 4th column extracts that member from the downloaded zip.
+benign/dotnet/nuget-6.11.1.exe	https://dist.nuget.org/win-x86-commandline/v6.11.1/nuget.exe	pe,dotnet
+benign/dotnet/nuget-5.11.6.exe	https://dist.nuget.org/win-x86-commandline/v5.11.6/nuget.exe	pe,dotnet
+benign/dotnet/Newtonsoft.Json-net45.dll	https://www.nuget.org/api/v2/package/Newtonsoft.Json/13.0.3	pe,dotnet,dll	lib/net45/Newtonsoft.Json.dll
+benign/dotnet/Newtonsoft.Json-net6.dll	https://www.nuget.org/api/v2/package/Newtonsoft.Json/13.0.3	pe,dotnet,dll	lib/net6.0/Newtonsoft.Json.dll
+benign/dotnet/Serilog.dll	https://www.nuget.org/api/v2/package/Serilog/4.1.0	pe,dotnet,dll	lib/net462/Serilog.dll
+benign/dotnet/Dapper.dll	https://www.nuget.org/api/v2/package/Dapper/2.1.35	pe,dotnet,dll	lib/netstandard2.0/Dapper.dll
+benign/dotnet/AutoMapper.dll	https://www.nuget.org/api/v2/package/AutoMapper/13.0.1	pe,dotnet,dll	lib/net6.0/AutoMapper.dll
+benign/dotnet/CommandLine.dll	https://www.nuget.org/api/v2/package/CommandLineParser/2.9.1	pe,dotnet,dll	lib/net45/CommandLine.dll
+benign/dotnet/Humanizer.dll	https://www.nuget.org/api/v2/package/Humanizer.Core/2.14.1	pe,dotnet,dll	lib/netstandard2.0/Humanizer.dll
+benign/dotnet/KeePass.exe	https://downloads.sourceforge.net/project/keepass/KeePass%202.x/2.57/KeePass-2.57.zip	pe,dotnet	KeePass.exe
+benign/dotnet/KeePass.XmlSerializers.dll	https://downloads.sourceforge.net/project/keepass/KeePass%202.x/2.57/KeePass-2.57.zip	pe,dotnet,dll	KeePass.XmlSerializers.dll
+benign/dotnet/ShInstUtil.exe	https://downloads.sourceforge.net/project/keepass/KeePass%202.x/2.57/KeePass-2.57.zip	pe	ShInstUtil.exe
+benign/dotnet/ILSpy.dll	https://github.com/icsharpcode/ILSpy/releases/download/v9.0/ILSpy_binaries_9.0.0.7889-x64.zip	pe,dotnet,dll	ILSpy.dll
+benign/dotnet/ICSharpCode.Decompiler.dll	https://github.com/icsharpcode/ILSpy/releases/download/v9.0/ILSpy_binaries_9.0.0.7889-x64.zip	pe,dotnet,dll	ICSharpCode.Decompiler.dll
+benign/dotnet/AvalonDock.dll	https://github.com/icsharpcode/ILSpy/releases/download/v9.0/ILSpy_binaries_9.0.0.7889-x64.zip	pe,dotnet,dll	AvalonDock.dll

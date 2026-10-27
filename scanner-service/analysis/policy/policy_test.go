@@ -19,6 +19,8 @@ func baseConfig() Config {
 		StaticRulesEnabled:   true,
 		StaticRuleVerdict:    Quarantine,
 		SuspiciousImportsMin: 3,
+		GenericRulesEnabled:  true,
+		EncryptedVerdict:     Quarantine,
 	}
 }
 
@@ -36,6 +38,16 @@ func TestDecide(t *testing.T) {
 	unscored := &classifier.Result{Label: "malicious", Confidence: nil}
 	insufficient := &classifier.Result{Label: "insufficient-evidence", Confidence: confidence(0.60)}
 	unknown := &classifier.Result{Label: "weird", Confidence: confidence(0.99)}
+
+	embeddedPE := evidence.StaticAnalysis{Supported: true, Kind: "generic", Generic: evidence.GenericEvidence{EmbeddedPE: true}}
+	pdfActive := evidence.StaticAnalysis{Supported: true, Kind: "pdf", Generic: evidence.GenericEvidence{HasJavaScript: true, AutoExec: true}}
+	macroExternal := evidence.StaticAnalysis{Supported: true, Kind: "office", Generic: evidence.GenericEvidence{HasMacros: true, ExternalTargets: []string{"http://evil.test/x"}}}
+	archiveExe := evidence.StaticAnalysis{Supported: true, Kind: "archive", Generic: evidence.GenericEvidence{NestedExecutables: []string{"setup.exe"}}}
+	obfuscatedScript := evidence.StaticAnalysis{Supported: true, Kind: "script", Generic: evidence.GenericEvidence{
+		ObfuscationHints:  []string{"long base64 blob"},
+		SuspiciousStrings: []string{"eval"},
+	}}
+	encrypted := evidence.StaticAnalysis{Supported: true, Kind: "archive", Generic: evidence.GenericEvidence{Encrypted: true}}
 
 	tests := []struct {
 		name string
@@ -64,6 +76,18 @@ func TestDecide(t *testing.T) {
 		{"static rule imports below min", Input{Analysis: twoImports, Classifier: benign}, baseConfig(), Allow},
 		{"static rule cannot downgrade", Input{Analysis: packed, Classifier: maliciousHigh}, baseConfig(), Block},
 		{"static rules disabled", Input{Analysis: packed, Classifier: benign}, Config{BlockConfidence: 0.95, StaticRulesEnabled: false, AllowUnsupported: true}, Allow},
+		{"generic rule embedded pe", Input{Analysis: embeddedPE, Classifier: benign}, baseConfig(), Quarantine},
+		{"generic rule active content", Input{Analysis: pdfActive, Classifier: benign}, baseConfig(), Quarantine},
+		{"generic rule macros external", Input{Analysis: macroExternal, Classifier: benign}, baseConfig(), Quarantine},
+		{"generic rule archive executable", Input{Analysis: archiveExe, Classifier: benign}, baseConfig(), Quarantine},
+		{"generic rule obfuscated script", Input{Analysis: obfuscatedScript, Classifier: benign}, baseConfig(), Quarantine},
+		{"generic rule encrypted", Input{Analysis: encrypted, Classifier: benign}, baseConfig(), Quarantine},
+		{"encrypted verdict block", Input{Analysis: encrypted, Classifier: benign}, Config{EncryptedVerdict: Block, GenericRulesEnabled: true, AllowUnsupported: true}, Block},
+		{"encrypted verdict allow", Input{Analysis: encrypted, Classifier: benign}, Config{EncryptedVerdict: Allow, GenericRulesEnabled: true, AllowUnsupported: true}, Allow},
+		{"clamav encrypted heuristic maps to quarantine", Input{ClamAVDetected: true, ClamAVSignature: "Heuristics.Encrypted.Zip"}, baseConfig(), Quarantine},
+		{"clamav encrypted heuristic can block", Input{ClamAVDetected: true, ClamAVSignature: "Heuristics.Encrypted.PDF"}, Config{EncryptedVerdict: Block}, Block},
+		{"clamav normal detection stays block", Input{ClamAVDetected: true, ClamAVSignature: "Eicar-Test-Signature"}, baseConfig(), Block},
+		{"generic rules disabled", Input{Analysis: embeddedPE, Classifier: benign}, Config{BlockConfidence: 0.95, AllowUnsupported: true, GenericRulesEnabled: false}, Allow},
 	}
 
 	for _, tt := range tests {

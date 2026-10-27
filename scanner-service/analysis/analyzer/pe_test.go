@@ -26,17 +26,17 @@ func TestEntropy(t *testing.T) {
 func TestPEAnalyzerSupports(t *testing.T) {
 	a := NewPEAnalyzer(0)
 
-	if a.Supports([]byte("plain text, not a PE")) {
+	if a.Supports(Input{Data: []byte("plain text, not a PE")}) {
 		t.Fatal("text file must not be supported")
 	}
-	if !a.Supports(minimalPE(".text", []byte{0x90, 0x90}, 0x60000020)) {
+	if !a.Supports(Input{Data: minimalPE(".text", []byte{0x90, 0x90}, 0x60000020)}) {
 		t.Fatal("minimal PE must be supported")
 	}
 }
 
 func TestPEAnalyzerLowEntropy(t *testing.T) {
 	a := NewPEAnalyzer(0)
-	result, err := a.Analyze(minimalPE(".text", make([]byte, 4096), 0x60000020))
+	result, err := a.Analyze(Input{Data: minimalPE(".text", make([]byte, 4096), 0x60000020)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestPEAnalyzerHighEntropyIsPacked(t *testing.T) {
 		data[i] = byte(i)
 	}
 
-	result, err := a.Analyze(minimalPE(".text", data, 0xE0000020))
+	result, err := a.Analyze(Input{Data: minimalPE(".text", data, 0xE0000020)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestPEAnalyzerHighEntropyIsPacked(t *testing.T) {
 
 func TestRegistryUnsupported(t *testing.T) {
 	registry := NewRegistry(NewPEAnalyzer(0))
-	result := registry.Analyze([]byte("plain text"))
+	result := registry.Analyze(Input{Data: []byte("plain text")})
 	if result.Supported {
 		t.Fatal("expected unsupported result")
 	}

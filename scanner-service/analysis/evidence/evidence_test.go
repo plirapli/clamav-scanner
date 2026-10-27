@@ -72,3 +72,43 @@ func TestToTextUnsupported(t *testing.T) {
 		t.Fatal("expected unsupported notice")
 	}
 }
+
+func TestToTextSigner(t *testing.T) {
+	signed := FileEvidence{StaticAnalysis: StaticAnalysis{
+		Supported: true, Kind: "pe", HasDigitalSignature: true, ImportsCount: 40,
+		SignerSubject: "Example Publisher", SignerIssuer: "Example CA",
+	}}
+	text := signed.ToText(false)
+	for _, want := range []string{"signature that could not be verified. Signer: Example Publisher; issued by: Example CA.", "None of the imports are on the suspicious API list."} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
+	}
+
+	unreadable := FileEvidence{StaticAnalysis: StaticAnalysis{Supported: true, Kind: "pe", HasDigitalSignature: true}}
+	if !strings.Contains(unreadable.ToText(false), "no signer certificate could be read") {
+		t.Fatal("expected unreadable signature notice")
+	}
+}
+
+func TestToTextDotNetAndOverlay(t *testing.T) {
+	ev := FileEvidence{
+		File: FileInfo{Size: 1000},
+		StaticAnalysis: StaticAnalysis{
+			Supported: true, Kind: "pe", IsDotNet: true, ImportsCount: 1,
+			OverlaySize: 250, OverlayEntropy: 7.99,
+			Generic: GenericEvidence{FileEntropy: 7.5},
+		},
+	}
+	text := ev.ToText(false)
+	for _, want := range []string{".NET assembly", "overlay): 250 bytes (25% of the file), entropy 7.99"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"File entropy", "None of the imports"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("unexpected %q in:\n%s", unwanted, text)
+		}
+	}
+}

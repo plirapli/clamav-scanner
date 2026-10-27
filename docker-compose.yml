@@ -59,6 +59,11 @@ services:
 
     environment:
       CLAMD_STARTUP_TIMEOUT: 300
+      # Report encrypted archives/documents as detections (Heuristics.Encrypted.*).
+      # The scanner service maps those signatures to ENCRYPTED_VERDICT (QUARANTINE).
+      CLAMD_CONF_AlertEncryptedArchive: "yes"
+      CLAMD_CONF_AlertEncrypted: "yes"
+      CLAMD_CONF_AlertEncryptedDoc: "yes"
 
     healthcheck:
       test: ["CMD-SHELL", "clamdscan --ping=5 || exit 1"]

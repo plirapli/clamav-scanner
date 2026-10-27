@@ -15,11 +15,44 @@ const scanLogColumns = `id, request_id, application, source_ip, filename, mime_t
 	size, status, virus_name, scan_engine, db_version, duration_ms, created_at,
 	verdict, verdict_reasons, clamav_detected, clamav_signature, analysis_supported,
 	evidence_json, classifier_label, classifier_confidence, classifier_scores,
-	classifier_model, classifier_error, quarantined`
+	classifier_model, classifier_error, quarantined, cached`
 
 // effectiveVerdict falls back to the legacy status column for rows written
 // before the verdict column existed.
 const effectiveVerdict = `COALESCE(NULLIF(verdict, ''), CASE WHEN status = 'infected' THEN 'BLOCK' ELSE 'ALLOW' END)`
+
+// scanLogOrder maps interfaces.ScanLogSortKeys to ORDER BY expressions. Verdict
+// sorts by severity and classifier by label, then confidence.
+var scanLogOrder = map[string][]string{
+	"filename":    {"filename COLLATE NOCASE"},
+	"virus_name":  {"virus_name COLLATE NOCASE"},
+	"verdict":     {"CASE " + effectiveVerdict + " WHEN 'BLOCK' THEN 2 WHEN 'QUARANTINE' THEN 1 ELSE 0 END"},
+	"classifier":  {"classifier_label", "classifier_confidence"},
+	"application": {"application COLLATE NOCASE"},
+	"source_ip":   {"source_ip"},
+	"size":        {"size"},
+	"created_at":  {"created_at"},
+}
+
+func orderBy(sortBy string, desc bool) string {
+	exprs, ok := scanLogOrder[sortBy]
+	if !ok {
+		exprs, desc = scanLogOrder["created_at"], true
+	}
+
+	direction := " ASC"
+	if desc {
+		direction = " DESC"
+	}
+
+	terms := make([]string, 0, len(exprs)+2)
+	for _, expr := range exprs {
+		terms = append(terms, expr+direction)
+	}
+	// Tie-breakers keep pages stable when sort values repeat.
+	terms = append(terms, "created_at DESC", "id DESC")
+	return strings.Join(terms, ", ")
+}
 
 type scanLogRepo struct {
 	db *sql.DB
@@ -35,8 +68,8 @@ func (r *scanLogRepo) Insert(ctx context.Context, scanLog entities.ScanLog) erro
 		size, status, virus_name, scan_engine, db_version, duration_ms, created_at,
 		verdict, verdict_reasons, clamav_detected, clamav_signature, analysis_supported,
 		evidence_json, classifier_label, classifier_confidence, classifier_scores,
-		classifier_model, classifier_error, quarantined
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		classifier_model, classifier_error, quarantined, cached
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	reasons := "[]"
 	if len(scanLog.VerdictReasons) > 0 {
@@ -90,12 +123,14 @@ func (r *scanLogRepo) Insert(ctx context.Context, scanLog entities.ScanLog) erro
 		scanLog.ClassifierModel,
 		scanLog.ClassifierError,
 		boolToInt(scanLog.Quarantined),
+		boolToInt(scanLog.Cached),
 	)
 
 	return err
 }
 
-func (r *scanLogRepo) List(ctx context.Context, filter interfaces.ScanLogFilter) ([]entities.ScanLog, int, error) {
+// whereClause builds the WHERE expression shared by List and Summary.
+func whereClause(filter interfaces.ScanLogFilter) (string, []any) {
 	conditions := []string{"1 = 1"}
 	args := []any{}
 
@@ -112,14 +147,18 @@ func (r *scanLogRepo) List(ctx context.Context, filter interfaces.ScanLogFilter)
 		args = append(args, filter.Verdict)
 	}
 
-	where := strings.Join(conditions, " AND ")
+	return strings.Join(conditions, " AND "), args
+}
+
+func (r *scanLogRepo) List(ctx context.Context, filter interfaces.ScanLogFilter) ([]entities.ScanLog, int, error) {
+	where, args := whereClause(filter)
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM scan_logs WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	query := "SELECT " + scanLogColumns + " FROM scan_logs WHERE " + where + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+	query := "SELECT " + scanLogColumns + " FROM scan_logs WHERE " + where + " ORDER BY " + orderBy(filter.SortBy, filter.SortDesc) + " LIMIT ? OFFSET ?"
 	args = append(args, filter.Limit, filter.Skip)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -140,6 +179,53 @@ func (r *scanLogRepo) List(ctx context.Context, filter interfaces.ScanLogFilter)
 	return logs, total, rows.Err()
 }
 
+func (r *scanLogRepo) Summary(ctx context.Context, filter interfaces.ScanLogFilter) (interfaces.ScanLogSummary, error) {
+	where, args := whereClause(filter)
+
+	summary := interfaces.ScanLogSummary{}
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM scan_logs WHERE "+where, args...).Scan(&summary.Total); err != nil {
+		return summary, err
+	}
+
+	var err error
+	if summary.VirusNames, err = r.groupBy(ctx, "virus_name", where, args); err != nil {
+		return summary, err
+	}
+	if summary.Applications, err = r.groupBy(ctx, "application", where, args); err != nil {
+		return summary, err
+	}
+	return summary, nil
+}
+
+// groupBy counts matching logs per non-empty value of column, most frequent
+// first. column is always a constant from Summary, never user input.
+func (r *scanLogRepo) groupBy(ctx context.Context, column, where string, args []any) ([]interfaces.ScanLogGroup, error) {
+	query := "SELECT " + column + ", COUNT(*), MAX(created_at) FROM scan_logs WHERE " + where +
+		" AND " + column + " != '' GROUP BY " + column + " ORDER BY COUNT(*) DESC, " + column + " COLLATE NOCASE"
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	groups := make([]interfaces.ScanLogGroup, 0)
+	for rows.Next() {
+		var (
+			group    interfaces.ScanLogGroup
+			lastSeen string
+		)
+		if err := rows.Scan(&group.Value, &group.Count, &lastSeen); err != nil {
+			return nil, err
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, lastSeen); err == nil {
+			group.LastSeen = parsed
+		}
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
 func scanRow(rows *sql.Rows) (entities.ScanLog, error) {
 	var (
 		scanLog           entities.ScanLog
@@ -151,6 +237,7 @@ func scanRow(rows *sql.Rows) (entities.ScanLog, error) {
 		clamavDetected    int
 		analysisSupported int
 		quarantined       int
+		cached            int
 	)
 
 	if err := rows.Scan(
@@ -180,6 +267,7 @@ func scanRow(rows *sql.Rows) (entities.ScanLog, error) {
 		&scanLog.ClassifierModel,
 		&scanLog.ClassifierError,
 		&quarantined,
+		&cached,
 	); err != nil {
 		return entities.ScanLog{}, err
 	}
@@ -204,6 +292,7 @@ func scanRow(rows *sql.Rows) (entities.ScanLog, error) {
 	scanLog.ClamAVDetected = clamavDetected != 0
 	scanLog.AnalysisSupported = analysisSupported != 0
 	scanLog.Quarantined = quarantined != 0
+	scanLog.Cached = cached != 0
 
 	if scanLog.Verdict == "" {
 		if scanLog.Status == entities.StatusInfected {

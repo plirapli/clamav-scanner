@@ -33,4 +33,5 @@ type ScanLog struct {
 	ClassifierModel      string             `bson:"classifier_model,omitempty" json:"classifier_model,omitempty"`
 	ClassifierError      string             `bson:"classifier_error,omitempty" json:"classifier_error,omitempty"`
 	Quarantined          bool               `bson:"quarantined" json:"quarantined"`
+	Cached               bool               `bson:"cached" json:"cached"`
 }

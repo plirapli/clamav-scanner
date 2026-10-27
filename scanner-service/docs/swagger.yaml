@@ -3,7 +3,7 @@ info:
   title: Scanner Service API
   version: "1.0"
   description: >
-    ClamAV scanning with PE static analysis and classifier.dev assessment.
+    ClamAV scanning with PE static analysis and Cloudflare Workers AI Clef assessment.
     Each layer is reported separately: detection (ClamAV), evidence (static
     analysis), assessment (classifier), decision (deterministic policy).
 servers:
@@ -74,6 +74,21 @@ paths:
           schema:
             type: string
             enum: [ALLOW, QUARANTINE, BLOCK]
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [filename, virus_name, verdict, classifier, application, source_ip, size, created_at]
+            default: created_at
+          description: Sort column. `verdict` sorts by severity, `classifier` by label then confidence.
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - name: limit
           in: query
           required: false
@@ -96,6 +111,82 @@ paths:
                 $ref: "#/components/schemas/Response"
         "400":
           description: Invalid limit, skip, or verdict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+  /api/eval/runs:
+    get:
+      tags:
+        - eval
+      summary: List local eval runs (newest first)
+      description: >
+        Read-only. Lists directories under `EVAL_RESULTS_DIR` that contain a
+        `raw.jsonl` written by `cmd/eval collect`.
+      responses:
+        "200":
+          description: Eval runs (`data` is an array of {name, created_at, samples, models, has_summary})
+  /api/eval/runs/{name}:
+    get:
+      tags:
+        - eval
+      summary: One eval run with per-sample verdicts
+      description: >
+        Returns `summary` (the run's summary.json from `cmd/eval analyze`, or null),
+        the scanner's current `policy` thresholds, and every sample with the verdict
+        that policy gives it.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Run directory name; anything that is not a plain directory name returns 404
+      responses:
+        "200":
+          description: Eval run detail
+        "404":
+          description: Unknown run
+  /api/scanner/logs/summary:
+    get:
+      tags:
+        - scanner
+      summary: Count scan logs per virus name and per application
+      description: >
+        Aggregates every log matching the filters (not just one page).
+        `virus_names` groups by ClamAV signature and skips logs without one;
+        `applications` groups by the `APP_NAME` of the scanner instance that
+        received the upload. Both are sorted by count, most frequent first.
+      parameters:
+        - name: virus_name
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by virus name (partial match)
+        - name: application
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by application name (exact match)
+        - name: verdict
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ALLOW, QUARANTINE, BLOCK]
+      responses:
+        "200":
+          description: >
+            `data` is `{total, virus_names: [{value, count, last_seen}],
+            applications: [{value, count, last_seen}]}`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+        "400":
+          description: Invalid verdict
           content:
             application/json:
               schema:
@@ -182,6 +273,9 @@ components:
       properties:
         supported:
           type: boolean
+        kind:
+          type: string
+          enum: [pe, pdf, office, archive, script, text, binary, generic, unknown]
         file_type:
           type: string
           example: PE32+
@@ -195,6 +289,24 @@ components:
           type: boolean
         has_digital_signature:
           type: boolean
+          description: false when the signature does not match the file (signature_status invalid)
+        signer_subject:
+          type: string
+          example: Microsoft Corporation
+        signer_issuer:
+          type: string
+          example: Microsoft Code Signing PCA 2011, Microsoft Corporation
+        signature_status:
+          type: string
+          enum: [valid, invalid, unverified]
+          description: valid = Authenticode digest and signature match the file; the certificate chain is not validated
+        is_dotnet:
+          type: boolean
+        overlay_size:
+          type: integer
+          description: bytes appended after the last section, excluding the certificate table
+        overlay_entropy:
+          type: number
         packer_hints:
           type: array
           items:
@@ -205,6 +317,48 @@ components:
             type: string
         imports_count:
           type: integer
+        generic:
+          $ref: "#/components/schemas/GenericEvidence"
+    GenericEvidence:
+      type: object
+      properties:
+        magic_type:
+          type: string
+          example: pdf
+        file_entropy:
+          type: number
+        embedded_pe:
+          type: boolean
+        embedded_types:
+          type: array
+          items:
+            type: string
+        nested_executables:
+          type: array
+          items:
+            type: string
+        urls:
+          type: array
+          items:
+            type: string
+        has_javascript:
+          type: boolean
+        has_macros:
+          type: boolean
+        external_targets:
+          type: array
+          items:
+            type: string
+        auto_exec:
+          type: boolean
+        suspicious_strings:
+          type: array
+          items:
+            type: string
+        obfuscation_hints:
+          type: array
+          items:
+            type: string
     Classifier:
       type: object
       properties:
@@ -216,7 +370,7 @@ components:
           nullable: true
         model:
           type: string
-          example: jev-1.13.0
+          example: clef
         scores:
           type: object
           additionalProperties:

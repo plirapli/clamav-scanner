@@ -19,9 +19,10 @@ type Config struct {
 	MaxScanSize  int64
 
 	ClassifierEnabled      bool
-	ClassifierURL          string
-	ClassifierAPIKey       string
-	ClassifierTier         string
+	ClassifierBaseURL      string
+	ClassifierAccountID    string
+	ClassifierAPIToken     string
+	ClassifierModel        string
 	ClassifierTimeout      time.Duration
 	ClassifierLabels       []string
 	ClassifierSendFilename bool
@@ -32,13 +33,22 @@ type Config struct {
 	StaticRulesEnabled     bool
 	StaticRuleVerdict      string
 	SuspiciousImportsMin   int64
+	GenericRulesEnabled    bool
+	EncryptedVerdict       string
 
 	PackerEntropyThreshold float64
 	QuarantineDir          string
 	QuarantineEnabled      bool
 	PublishAllVerdicts     bool
 
+	CacheEnabled    bool
+	CacheTTL        time.Duration
+	CacheErrorTTL   time.Duration
+	CacheMaxEntries int64
+
 	MaxFilesPerRequest int64
+
+	EvalResultsDir string
 }
 
 func Load() Config {
@@ -55,10 +65,11 @@ func Load() Config {
 		MaxScanSize:  getEnvInt64("MAX_SCAN_SIZE", 25<<20),
 
 		ClassifierEnabled:      getEnvBool("CLASSIFIER_ENABLED", true),
-		ClassifierURL:          getEnv("CLASSIFIER_URL", "https://classifier.dev"),
-		ClassifierAPIKey:       getEnv("CLASSIFIER_API_KEY", ""),
-		ClassifierTier:         getEnv("CLASSIFIER_TIER", "fast"),
-		ClassifierTimeout:      getEnvDuration("CLASSIFIER_TIMEOUT", 10*time.Second),
+		ClassifierBaseURL:      getEnv("CLASSIFIER_BASE_URL", "https://api.cloudflare.com/client/v4"),
+		ClassifierAccountID:    getEnv("CLOUDFLARE_ACCOUNT_ID", ""),
+		ClassifierAPIToken:     getEnv("CLOUDFLARE_API_TOKEN", ""),
+		ClassifierModel:        getEnv("CLASSIFIER_MODEL", "clef"),
+		ClassifierTimeout:      getEnvDuration("CLASSIFIER_TIMEOUT", 30*time.Second),
 		ClassifierLabels:       getEnvList("CLASSIFIER_LABELS", []string{"benign", "suspicious", "malicious", "insufficient-evidence"}),
 		ClassifierSendFilename: getEnvBool("CLASSIFIER_SEND_FILENAME", false),
 
@@ -68,13 +79,22 @@ func Load() Config {
 		StaticRulesEnabled:     getEnvBool("STATIC_RULES_ENABLED", true),
 		StaticRuleVerdict:      getEnv("STATIC_RULE_VERDICT", "QUARANTINE"),
 		SuspiciousImportsMin:   getEnvInt64("SUSPICIOUS_IMPORTS_MIN", 3),
+		GenericRulesEnabled:    getEnvBool("GENERIC_RULES_ENABLED", true),
+		EncryptedVerdict:       getEnv("ENCRYPTED_VERDICT", "QUARANTINE"),
 
 		PackerEntropyThreshold: getEnvFloat("PACKER_ENTROPY_THRESHOLD", 7.2),
 		QuarantineDir:          getEnv("QUARANTINE_DIR", "data/quarantine"),
 		QuarantineEnabled:      getEnvBool("QUARANTINE_ENABLED", true),
 		PublishAllVerdicts:     getEnvBool("PUBLISH_ALL_VERDICTS", false),
 
+		CacheEnabled:    getEnvBool("CACHE_ENABLED", true),
+		CacheTTL:        getEnvDuration("CACHE_TTL", 168*time.Hour),
+		CacheErrorTTL:   getEnvDuration("CACHE_ERROR_TTL", 15*time.Minute),
+		CacheMaxEntries: getEnvInt64("CACHE_MAX_ENTRIES", 100000),
+
 		MaxFilesPerRequest: getEnvInt64("MAX_FILES_PER_REQUEST", 10),
+
+		EvalResultsDir: getEnv("EVAL_RESULTS_DIR", "../eval/results"),
 	}
 }
 
@@ -160,7 +180,7 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	}
 
 	parsed, err := time.ParseDuration(value)
-	if err != nil || parsed <= 0 {
+	if err != nil || parsed < 0 {
 		return fallback
 	}
 
